@@ -9,7 +9,6 @@
     body { overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #111; color: #fff; }
     #canvas-container { width: 100vw; height: 100vh; }
     
-    /* 啟動封面 Overlay */
     #start-screen {
       position: absolute; top: 0; left: 0; width: 100%; height: 100%;
       background: rgba(15, 15, 25, 0.95); display: flex; flex-direction: column;
@@ -24,7 +23,6 @@
     }
     #start-btn:hover { transform: scale(1.05); background: #fff; }
 
-    /* UI 提示層 */
     #ui-layer {
       position: absolute; top: 20px; left: 20px; z-index: 10;
       pointer-events: none; text-shadow: 1px 1px 4px #000;
@@ -66,20 +64,18 @@
     let isPanoramaMode = false;
     let currentPainting = null;
     let keys = {};
-    let panoramaMesh, panoramaMaterial;
-    let audioContext, audioSource;
+    let panoramaMesh;
     let clock = new THREE.Clock();
 
-    // 5 幅名畫數據庫（預設《星夜》啟用 Shader 純程式演算延伸）
     const paintingsData = [
-      { id: 'starry_night', name: '梵谷《星夜》', x: -8, z: -14, bg: 'starry_night.jpg', audio: '', effect: 'procedural' },
-      { id: 'last_supper', name: '達文西《最後的晚餐》', x: -4, z: -14, bg: 'starry_night.jpg', audio: '', effect: 'procedural' },
-      { id: 'scream', name: '孟克《吶喊》', x: 0, z: -14, bg: 'starry_night.jpg', audio: '', effect: 'procedural' },
-      { id: 'great_wave', name: '葛飾北齋《神奈川沖浪裏》', x: 4, z: -14, bg: 'starry_night.jpg', audio: '', effect: 'procedural' },
-      { id: 'grand_jatte', name: '秀拉《大碗島的星期天下午》', x: 8, z: -14, bg: 'starry_night.jpg', audio: '', effect: 'procedural' }
+      { id: 'starry_night', name: '梵谷《星夜》', x: -8, z: -14, bg: 'starry_night.jpg' },
+      { id: 'last_supper', name: '達文西《最後的晚餐》', x: -4, z: -14, bg: 'starry_night.jpg' },
+      { id: 'scream', name: '孟克《吶喊》', x: 0, z: -14, bg: 'starry_night.jpg' },
+      { id: 'great_wave', name: '葛飾北齋《神奈川沖浪裏》', x: 4, z: -14, bg: 'starry_night.jpg' },
+      { id: 'grand_jatte', name: '秀拉《大碗島的星期天下午》', x: 8, z: -14, bg: 'starry_night.jpg' }
     ];
 
-    // --- 純程式碼演算《星夜》風格 360 度全景 Shader ---
+    // --- 修正後的《星夜》程序化延伸 GLSL Shader ---
     const starryVertexShader = `
       varying vec2 vUv;
       void main() {
@@ -93,7 +89,6 @@
       uniform float uTime;
       varying vec2 vUv;
 
-      // 2D 噪波演算法 (Simplex Noise 模擬梵谷動態筆觸)
       vec2 hash2(vec2 p) {
         p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
         return -1.0 + 2.0 * fract(sin(p) * 43758.5453123);
@@ -116,10 +111,9 @@
       void main() {
         vec2 uv = vUv;
 
-        // 1. 前方區域 (UV.x 0.3~0.7) 顯示上傳的原圖片，兩側與後方由 GPU 演算法自動擴展延伸
-        float centerMask = smoothstep(0.15, 0.35, uv.x) * (1.0 - smoothstep(0.65, 0.85, uv.x));
+        // 擴大中央圖形顯示範圍，並與演算法算圖進行軟邊界融合
+        float centerMask = smoothstep(0.05, 0.25, uv.x) * (1.0 - smoothstep(0.75, 0.95, uv.x));
 
-        // 2. 程式化算圖：生成星夜配色與漩渦筆觸
         vec2 st = uv * vec2(12.0, 6.0);
         float n1 = simplexNoise(st + vec2(uTime * 0.1, uTime * 0.05));
         float n2 = simplexNoise(st * 2.0 + vec2(-uTime * 0.12, n1));
@@ -131,7 +125,6 @@
         vec3 algoColor = mix(nightBlue, skyBlue, n1 * 0.5 + 0.5);
         algoColor = mix(algoColor, starYellow, smoothstep(0.35, 0.75, n2) * (uv.y > 0.35 ? 1.0 : 0.0));
 
-        // 3. 漩渦與流動處理
         float skyMask = smoothstep(0.35, 0.9, uv.y);
         vec2 vortexCenter = vec2(0.5, 0.7);
         vec2 distVec = uv - vortexCenter;
@@ -140,13 +133,13 @@
         float cosA = cos(angle); float sinA = sin(angle);
         vec2 rotatedUv = vec2(cosA * distVec.x - sinA * distVec.y, sinA * distVec.x + cosA * distVec.y) + vortexCenter;
 
-        // 4. 採樣原圖片並融合
         vec4 origTexture = texture2D(uTexture, rotatedUv);
-        vec3 finalColor = mix(algoColor, origTexture.rgb, centerMask);
+        
+        // 若圖片載入不成功，自動回退使用純程式算圖，確保不會出現黑屏
+        vec3 finalColor = (origTexture.a > 0.0) ? mix(algoColor, origTexture.rgb, centerMask) : algoColor;
 
-        // 5. 呼吸閃爍光暈
         float brightness = (finalColor.r + finalColor.g + finalColor.b) / 3.0;
-        if (brightness > 0.6 && uv.y > 0.4) {
+        if (brightness > 0.4 && uv.y > 0.3) {
           float shimmer = sin(uTime * 2.5 + brightness * 10.0) * 0.08;
           finalColor += vec3(shimmer * 0.5, shimmer * 0.4, shimmer * 0.1);
         }
@@ -165,13 +158,12 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
       container.appendChild(renderer.domElement);
 
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
       scene.add(ambientLight);
 
       galleryGroup = new THREE.Group();
       scene.add(galleryGroup);
 
-      // 地板與牆面
       const floor = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.MeshStandardMaterial({ color: 0x22222e }));
       floor.rotation.x = -Math.PI / 2;
       galleryGroup.add(floor);
@@ -180,7 +172,6 @@
       backWall.position.set(0, 5, -15);
       galleryGroup.add(backWall);
 
-      // 3D 卡通角色
       player = new THREE.Group();
       const body = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.2, 0.6), new THREE.MeshStandardMaterial({ color: 0x3498db }));
       body.position.y = 0.6;
@@ -190,15 +181,21 @@
       player.add(head);
       galleryGroup.add(player);
 
-      // 生成 5 個畫框
+      // 載入畫框與名畫
+      const textureLoader = new THREE.TextureLoader();
+      textureLoader.crossOrigin = 'anonymous'; // 允許跨網域存取
+
       paintingsData.forEach(data => {
         const frame = new THREE.Mesh(new THREE.BoxGeometry(2.2, 3.2, 0.2), new THREE.MeshStandardMaterial({ color: 0x8b4513 }));
         frame.position.set(data.x, 3.5, data.z + 0.1);
         galleryGroup.add(frame);
 
-        const canvas = new THREE.Mesh(new THREE.PlaneGeometry(2, 3), new THREE.MeshBasicMaterial({ color: 0xdddddd }));
-        canvas.position.set(data.x, 3.5, data.z + 0.22);
-        galleryGroup.add(canvas);
+        const canvasMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        textureLoader.load(data.bg, tex => { canvasMat.map = tex; canvasMat.needsUpdate = true; });
+
+        const canvasMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 3), canvasMat);
+        canvasMesh.position.set(data.x, 3.5, data.z + 0.22);
+        galleryGroup.add(canvasMesh);
       });
 
       camera.position.set(0, 5, 8);
@@ -208,7 +205,6 @@
       window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
       window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 
-      // 滑鼠拖曳 360 度環繞
       let isDragging = false, previousMousePosition = { x: 0, y: 0 };
       container.addEventListener('mousedown', () => isDragging = true);
       container.addEventListener('mouseup', () => isDragging = false);
@@ -229,52 +225,56 @@
       animate();
     }
 
-    // --- 進入程序化延伸畫中世界（隱藏外層畫框與展廳）---
     function enterPanorama(paintingData) {
       isPanoramaMode = true;
       currentPainting = paintingData;
 
-      // 1. 完全隱藏外層畫框與展廳
       galleryGroup.visible = false;
 
-      // 2. 更新 UI 提示
       document.getElementById('prompt-text').style.display = 'none';
       document.getElementById('back-btn').style.display = 'block';
       document.getElementById('gallery-title').innerText = `進入畫中：${paintingData.name}`;
-      document.getElementById('controls-hint').innerText = '按住滑鼠左鍵左右拖曳，可 360° 全景觀察程序化延伸繪畫';
+      document.getElementById('controls-hint').innerText = '按住滑鼠左鍵左右拖曳，可 360° 環繞觀察程序化延伸繪畫';
 
-      // 3. 建立 360 度內壁球體與 Shader 材質
       const panoGeo = new THREE.SphereGeometry(500, 60, 40);
       panoGeo.scale(-1, 1, 1);
 
       const textureLoader = new THREE.TextureLoader();
+      textureLoader.crossOrigin = 'anonymous';
+
+      // 先掛載程序化 Shader 材質，確保立即亮起
+      const shaderMaterial = new THREE.ShaderMaterial({
+        vertexShader: starryVertexShader,
+        fragmentShader: starryFragmentShader,
+        uniforms: {
+          uTexture: { value: new THREE.Texture() },
+          uTime: { value: 0.0 }
+        },
+        side: THREE.DoubleSide
+      });
+
+      panoramaMesh = new THREE.Mesh(panoGeo, shaderMaterial);
+      scene.add(panoramaMesh);
+
+      // 異步載入《星夜》圖片貼圖
       textureLoader.load(paintingData.bg, texture => {
         texture.wrapS = THREE.RepeatWrapping;
         texture.wrapT = THREE.ClampToEdgeWrapping;
-
-        panoramaMaterial = new THREE.ShaderMaterial({
-          vertexShader: starryVertexShader,
-          fragmentShader: starryFragmentShader,
-          uniforms: { uTexture: { value: texture }, uTime: { value: 0.0 } },
-          side: THREE.DoubleSide
-        });
-
-        panoramaMesh.material = panoramaMaterial;
+        shaderMaterial.uniforms.uTexture.value = texture;
       });
-
-      panoramaMesh = new THREE.Mesh(panoGeo, new THREE.MeshBasicMaterial({ color: 0x050515 }));
-      scene.add(panoramaMesh);
 
       camera.position.set(0, 0, 0);
       camera.rotation.set(0, 0, 0);
     }
 
-    // --- 退出畫中世界 ---
     function exitPanorama() {
       isPanoramaMode = false;
 
-      if (panoramaMesh) scene.remove(panoramaMesh);
-      galleryGroup.visible = true; // 重新顯示展廳與畫框
+      if (panoramaMesh) {
+        scene.remove(panoramaMesh);
+        panoramaMesh = null;
+      }
+      galleryGroup.visible = true;
 
       document.getElementById('back-btn').style.display = 'none';
       document.getElementById('gallery-title').innerText = '3D 主展覽廳';
@@ -289,7 +289,6 @@
       const elapsedTime = clock.getElapsedTime();
 
       if (!isPanoramaMode) {
-        // 小人物展廳控制
         const speed = 0.15;
         if (keys['w'] || keys['arrowup']) player.position.z -= speed;
         if (keys['s'] || keys['arrowdown']) player.position.z += speed;
@@ -303,7 +302,6 @@
         camera.position.z = player.position.z + 8;
         camera.lookAt(player.position.x, 1.5, player.position.z);
 
-        // 檢測靠近畫作
         let nearPainting = null;
         paintingsData.forEach(p => {
           const dist = player.position.distanceTo(new THREE.Vector3(p.x, 0, p.z));
@@ -319,8 +317,7 @@
           promptUI.style.display = 'none';
         }
       } else {
-        // 時時更新 Shader 的時間計數，讓動態演算法持續運算
-        if (panoramaMesh && panoramaMesh.material.uniforms) {
+        if (panoramaMesh && panoramaMesh.material && panoramaMesh.material.uniforms) {
           panoramaMesh.material.uniforms.uTime.value = elapsedTime;
         }
       }
