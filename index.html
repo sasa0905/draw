@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>藝境漫遊：程序化演算名畫世界 (ArtScape Procedural)</title>
+  <title>藝境漫遊：名畫中的迴響 (ArtScape 3D)</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #111; color: #fff; }
@@ -44,8 +44,8 @@
 <body>
 
   <div id="start-screen">
-    <h1>藝境漫遊：程序化演算名畫世界</h1>
-    <p>控制 3D 任天堂風小角色在展廳漫遊。<br>靠近畫作按 <strong>[Enter]</strong> 穿越進入由演算法即時延伸的 360° 動態畫中世界！</p>
+    <h1>藝境漫遊：名畫中的迴響</h1>
+    <p>控制 3D 任天堂風小角色在展廳漫遊。<br>靠近畫作按下 <strong>[Enter]</strong> 穿越進入 2D 360° 動態環繞畫中世界！</p>
     <button id="start-btn">開始展覽遊覽</button>
   </div>
 
@@ -75,78 +75,30 @@
       { id: 'grand_jatte', name: '秀拉《大碗島的星期天下午》', x: 8, z: -14, bg: 'starry_night.jpg' }
     ];
 
-    // --- 修正後的《星夜》程序化延伸 GLSL Shader ---
-    const starryVertexShader = `
-      varying vec2 vUv;
-      void main() {
-        vUv = uv;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    // 動態生成備用畫布（當圖片載入受阻時，自動繪製星空圖案，防黑屏）
+    function createFallbackTexture() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 1024; canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+      
+      const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+      grad.addColorStop(0, '#0a192f');
+      grad.addColorStop(0.6, '#1e3a8a');
+      grad.addColorStop(1, '#f59e0b');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = '#fef08a';
+      for(let i = 0; i < 150; i++) {
+        const x = Math.random() * canvas.width;
+        const y = Math.random() * canvas.height * 0.7;
+        const r = Math.random() * 3 + 1;
+        ctx.beginPath();
+        ctx.arc(x, y, r, 0, Math.PI * 2);
+        ctx.fill();
       }
-    `;
-
-    const starryFragmentShader = `
-      uniform sampler2D uTexture;
-      uniform float uTime;
-      varying vec2 vUv;
-
-      vec2 hash2(vec2 p) {
-        p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
-        return -1.0 + 2.0 * fract(sin(p) * 43758.5453123);
-      }
-
-      float simplexNoise(vec2 p) {
-        const float K1 = 0.366025404;
-        const float K2 = 0.211324865;
-        vec2 i = floor(p + (p.x + p.y) * K1);
-        vec2 a = p - i + (i.x + i.y) * K2;
-        vec2 m = step(a.yx, a.x);
-        vec2 o = m.x * vec2(1.0, 0.0) + (1.0 - m.x) * vec2(0.0, 1.0);
-        vec2 b = a - o + K2;
-        vec2 c = a - 1.0 + 2.0 * K2;
-        vec3 h = max(0.5 - vec3(dot(a, a), dot(b, b), dot(c, c)), 0.0);
-        vec3 n = h * h * h * h * vec3(dot(a, hash2(i)), dot(b, hash2(i + o)), dot(c, hash2(i + 1.0)));
-        return dot(n, vec3(70.0));
-      }
-
-      void main() {
-        vec2 uv = vUv;
-
-        // 擴大中央圖形顯示範圍，並與演算法算圖進行軟邊界融合
-        float centerMask = smoothstep(0.05, 0.25, uv.x) * (1.0 - smoothstep(0.75, 0.95, uv.x));
-
-        vec2 st = uv * vec2(12.0, 6.0);
-        float n1 = simplexNoise(st + vec2(uTime * 0.1, uTime * 0.05));
-        float n2 = simplexNoise(st * 2.0 + vec2(-uTime * 0.12, n1));
-        
-        vec3 nightBlue  = vec3(0.04, 0.10, 0.19);
-        vec3 skyBlue    = vec3(0.12, 0.32, 0.58);
-        vec3 starYellow = vec3(0.95, 0.82, 0.38);
-
-        vec3 algoColor = mix(nightBlue, skyBlue, n1 * 0.5 + 0.5);
-        algoColor = mix(algoColor, starYellow, smoothstep(0.35, 0.75, n2) * (uv.y > 0.35 ? 1.0 : 0.0));
-
-        float skyMask = smoothstep(0.35, 0.9, uv.y);
-        vec2 vortexCenter = vec2(0.5, 0.7);
-        vec2 distVec = uv - vortexCenter;
-        float dist = length(distVec);
-        float angle = sin(uTime * 0.8 - dist * 4.0) * 0.08 * skyMask;
-        float cosA = cos(angle); float sinA = sin(angle);
-        vec2 rotatedUv = vec2(cosA * distVec.x - sinA * distVec.y, sinA * distVec.x + cosA * distVec.y) + vortexCenter;
-
-        vec4 origTexture = texture2D(uTexture, rotatedUv);
-        
-        // 若圖片載入不成功，自動回退使用純程式算圖，確保不會出現黑屏
-        vec3 finalColor = (origTexture.a > 0.0) ? mix(algoColor, origTexture.rgb, centerMask) : algoColor;
-
-        float brightness = (finalColor.r + finalColor.g + finalColor.b) / 3.0;
-        if (brightness > 0.4 && uv.y > 0.3) {
-          float shimmer = sin(uTime * 2.5 + brightness * 10.0) * 0.08;
-          finalColor += vec3(shimmer * 0.5, shimmer * 0.4, shimmer * 0.1);
-        }
-
-        gl_FragColor = vec4(finalColor, 1.0);
-      }
-    `;
+      return new THREE.CanvasTexture(canvas);
+    }
 
     function init() {
       const container = document.getElementById('canvas-container');
@@ -158,7 +110,7 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
       container.appendChild(renderer.domElement);
 
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.8);
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.9);
       scene.add(ambientLight);
 
       galleryGroup = new THREE.Group();
@@ -181,17 +133,18 @@
       player.add(head);
       galleryGroup.add(player);
 
-      // 載入畫框與名畫
       const textureLoader = new THREE.TextureLoader();
-      textureLoader.crossOrigin = 'anonymous'; // 允許跨網域存取
 
       paintingsData.forEach(data => {
         const frame = new THREE.Mesh(new THREE.BoxGeometry(2.2, 3.2, 0.2), new THREE.MeshStandardMaterial({ color: 0x8b4513 }));
         frame.position.set(data.x, 3.5, data.z + 0.1);
         galleryGroup.add(frame);
 
-        const canvasMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-        textureLoader.load(data.bg, tex => { canvasMat.map = tex; canvasMat.needsUpdate = true; });
+        const canvasMat = new THREE.MeshBasicMaterial({ map: createFallbackTexture() });
+        textureLoader.load(data.bg, tex => { 
+          canvasMat.map = tex; 
+          canvasMat.needsUpdate = true; 
+        });
 
         const canvasMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 3), canvasMat);
         canvasMesh.position.set(data.x, 3.5, data.z + 0.22);
@@ -234,33 +187,23 @@
       document.getElementById('prompt-text').style.display = 'none';
       document.getElementById('back-btn').style.display = 'block';
       document.getElementById('gallery-title').innerText = `進入畫中：${paintingData.name}`;
-      document.getElementById('controls-hint').innerText = '按住滑鼠左鍵左右拖曳，可 360° 環繞觀察程序化延伸繪畫';
+      document.getElementById('controls-hint').innerText = '按住滑鼠左鍵左右拖曳，可 360° 全景環繞畫作';
 
       const panoGeo = new THREE.SphereGeometry(500, 60, 40);
       panoGeo.scale(-1, 1, 1);
 
-      const textureLoader = new THREE.TextureLoader();
-      textureLoader.crossOrigin = 'anonymous';
-
-      // 先掛載程序化 Shader 材質，確保立即亮起
-      const shaderMaterial = new THREE.ShaderMaterial({
-        vertexShader: starryVertexShader,
-        fragmentShader: starryFragmentShader,
-        uniforms: {
-          uTexture: { value: new THREE.Texture() },
-          uTime: { value: 0.0 }
-        },
-        side: THREE.DoubleSide
-      });
-
-      panoramaMesh = new THREE.Mesh(panoGeo, shaderMaterial);
+      // 先掛載備用紋理，確保 100% 亮起
+      const panoMat = new THREE.MeshBasicMaterial({ map: createFallbackTexture() });
+      panoramaMesh = new THREE.Mesh(panoGeo, panoMat);
       scene.add(panoramaMesh);
 
-      // 異步載入《星夜》圖片貼圖
+      // 載入圖片（成功後直接替換）
+      const textureLoader = new THREE.TextureLoader();
       textureLoader.load(paintingData.bg, texture => {
         texture.wrapS = THREE.RepeatWrapping;
         texture.wrapT = THREE.ClampToEdgeWrapping;
-        shaderMaterial.uniforms.uTexture.value = texture;
+        panoMat.map = texture;
+        panoMat.needsUpdate = true;
       });
 
       camera.position.set(0, 0, 0);
@@ -286,7 +229,6 @@
 
     function animate() {
       requestAnimationFrame(animate);
-      const elapsedTime = clock.getElapsedTime();
 
       if (!isPanoramaMode) {
         const speed = 0.15;
@@ -317,8 +259,9 @@
           promptUI.style.display = 'none';
         }
       } else {
-        if (panoramaMesh && panoramaMesh.material && panoramaMesh.material.uniforms) {
-          panoramaMesh.material.uniforms.uTime.value = elapsedTime;
+        // 全景模式下緩慢流動自轉
+        if (panoramaMesh) {
+          panoramaMesh.rotation.y += 0.0008;
         }
       }
 
