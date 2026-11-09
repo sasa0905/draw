@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>藝境漫遊：名畫中的迴響 (ArtScape 2D/3D)</title>
+  <title>藝境漫遊：程序化演算名畫世界 (ArtScape Procedural)</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body { overflow: hidden; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #111; color: #fff; }
@@ -46,8 +46,8 @@
 <body>
 
   <div id="start-screen">
-    <h1>藝境漫遊：名畫中的迴響</h1>
-    <p>控制 3D 小角色在展廳漫遊。<br>靠近畫作按下 <strong>[Enter]</strong> 穿越進入 2D 360° 動態環繞畫中世界！</p>
+    <h1>藝境漫遊：程序化演算名畫世界</h1>
+    <p>控制 3D 任天堂風小角色在展廳漫遊。<br>靠近畫作按 <strong>[Enter]</strong> 穿越進入由演算法即時延伸的 360° 動態畫中世界！</p>
     <button id="start-btn">開始展覽遊覽</button>
   </div>
 
@@ -62,8 +62,7 @@
 
   <script>
     let scene, camera, renderer;
-    let player;
-    let galleryGroup; // 用於包裹「主展廳、牆面與所有畫框」的群組
+    let player, galleryGroup;
     let isPanoramaMode = false;
     let currentPainting = null;
     let keys = {};
@@ -71,16 +70,16 @@
     let audioContext, audioSource;
     let clock = new THREE.Clock();
 
-    // 5 幅名畫數據庫
+    // 5 幅名畫數據庫（預設《星夜》啟用 Shader 純程式演算延伸）
     const paintingsData = [
-      { id: 'starry_night', name: '梵谷《星夜》', x: -8, z: -14, bg: 'assets/panoramas/starry_night.jpg', audio: 'assets/audio/starry_night.mp3', effect: 'shader' },
-      { id: 'last_supper', name: '達文西《最後的晚餐》', x: -4, z: -14, bg: 'assets/panoramas/last_supper.jpg', audio: 'assets/audio/last_supper.mp3', effect: 'normal' },
-      { id: 'scream', name: '孟克《吶喊》', x: 0, z: -14, bg: 'assets/panoramas/scream.jpg', audio: 'assets/audio/scream.mp3', effect: 'normal' },
-      { id: 'great_wave', name: '葛飾北齋《神奈川沖浪裏》', x: 4, z: -14, bg: 'assets/panoramas/great_wave.jpg', audio: 'assets/audio/great_wave.mp3', effect: 'normal' },
-      { id: 'grand_jatte', name: '秀拉《大碗島的星期天下午》', x: 8, z: -14, bg: 'assets/panoramas/grand_jatte.jpg', audio: 'assets/audio/grand_jatte.mp3', effect: 'normal' }
+      { id: 'starry_night', name: '梵谷《星夜》', x: -8, z: -14, bg: 'starry_night.jpg', audio: '', effect: 'procedural' },
+      { id: 'last_supper', name: '達文西《最後的晚餐》', x: -4, z: -14, bg: 'starry_night.jpg', audio: '', effect: 'procedural' },
+      { id: 'scream', name: '孟克《吶喊》', x: 0, z: -14, bg: 'starry_night.jpg', audio: '', effect: 'procedural' },
+      { id: 'great_wave', name: '葛飾北齋《神奈川沖浪裏》', x: 4, z: -14, bg: 'starry_night.jpg', audio: '', effect: 'procedural' },
+      { id: 'grand_jatte', name: '秀拉《大碗島的星期天下午》', x: 8, z: -14, bg: 'starry_night.jpg', audio: '', effect: 'procedural' }
     ];
 
-    // --- 梵谷《星夜》專用 GLSL Shader ---
+    // --- 純程式碼演算《星夜》風格 360 度全景 Shader ---
     const starryVertexShader = `
       varying vec2 vUv;
       void main() {
@@ -94,34 +93,65 @@
       uniform float uTime;
       varying vec2 vUv;
 
-      float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-      float noise(vec2 p) {
-        vec2 i = floor(p); vec2 f = fract(p);
-        f = f * f * (3.0 - 2.0 * f);
-        return mix(mix(hash(i), hash(i + vec2(1.0, 0.0)), f.x), mix(hash(i + vec2(0.0, 1.0)), hash(i + vec2(1.0, 1.0)), f.x), f.y);
+      // 2D 噪波演算法 (Simplex Noise 模擬梵谷動態筆觸)
+      vec2 hash2(vec2 p) {
+        p = vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)));
+        return -1.0 + 2.0 * fract(sin(p) * 43758.5453123);
+      }
+
+      float simplexNoise(vec2 p) {
+        const float K1 = 0.366025404;
+        const float K2 = 0.211324865;
+        vec2 i = floor(p + (p.x + p.y) * K1);
+        vec2 a = p - i + (i.x + i.y) * K2;
+        vec2 m = step(a.yx, a.x);
+        vec2 o = m.x * vec2(1.0, 0.0) + (1.0 - m.x) * vec2(0.0, 1.0);
+        vec2 b = a - o + K2;
+        vec2 c = a - 1.0 + 2.0 * K2;
+        vec3 h = max(0.5 - vec3(dot(a, a), dot(b, b), dot(c, c)), 0.0);
+        vec3 n = h * h * h * h * vec3(dot(a, hash2(i)), dot(b, hash2(i + o)), dot(c, hash2(i + 1.0)));
+        return dot(n, vec3(70.0));
       }
 
       void main() {
         vec2 uv = vUv;
+
+        // 1. 前方區域 (UV.x 0.3~0.7) 顯示上傳的原圖片，兩側與後方由 GPU 演算法自動擴展延伸
+        float centerMask = smoothstep(0.15, 0.35, uv.x) * (1.0 - smoothstep(0.65, 0.85, uv.x));
+
+        // 2. 程式化算圖：生成星夜配色與漩渦筆觸
+        vec2 st = uv * vec2(12.0, 6.0);
+        float n1 = simplexNoise(st + vec2(uTime * 0.1, uTime * 0.05));
+        float n2 = simplexNoise(st * 2.0 + vec2(-uTime * 0.12, n1));
+        
+        vec3 nightBlue  = vec3(0.04, 0.10, 0.19);
+        vec3 skyBlue    = vec3(0.12, 0.32, 0.58);
+        vec3 starYellow = vec3(0.95, 0.82, 0.38);
+
+        vec3 algoColor = mix(nightBlue, skyBlue, n1 * 0.5 + 0.5);
+        algoColor = mix(algoColor, starYellow, smoothstep(0.35, 0.75, n2) * (uv.y > 0.35 ? 1.0 : 0.0));
+
+        // 3. 漩渦與流動處理
         float skyMask = smoothstep(0.35, 0.9, uv.y);
         vec2 vortexCenter = vec2(0.5, 0.7);
         vec2 distVec = uv - vortexCenter;
         float dist = length(distVec);
-        
         float angle = sin(uTime * 0.8 - dist * 4.0) * 0.08 * skyMask;
         float cosA = cos(angle); float sinA = sin(angle);
         vec2 rotatedUv = vec2(cosA * distVec.x - sinA * distVec.y, sinA * distVec.x + cosA * distVec.y) + vortexCenter;
 
-        float n = noise(rotatedUv * 12.0 + vec2(uTime * 0.3, uTime * 0.2));
-        vec2 finalUv = rotatedUv + vec2(cos(n * 6.28), sin(n * 6.28)) * 0.012 * skyMask;
+        // 4. 採樣原圖片並融合
+        vec4 origTexture = texture2D(uTexture, rotatedUv);
+        vec3 finalColor = mix(algoColor, origTexture.rgb, centerMask);
 
-        vec4 color = texture2D(uTexture, finalUv);
-        float brightness = (color.r + color.g + color.b) / 3.0;
-        if (brightness > 0.65 && uv.y > 0.4) {
+        // 5. 呼吸閃爍光暈
+        float brightness = (finalColor.r + finalColor.g + finalColor.b) / 3.0;
+        if (brightness > 0.6 && uv.y > 0.4) {
           float shimmer = sin(uTime * 2.5 + brightness * 10.0) * 0.08;
-          color.rgb += vec3(shimmer * 0.5, shimmer * 0.4, shimmer * 0.1);
+          finalColor += vec3(shimmer * 0.5, shimmer * 0.4, shimmer * 0.1);
         }
-        gl_FragColor = color;
+
+        gl_FragColor = vec4(finalColor, 1.0);
       }
     `;
 
@@ -138,7 +168,6 @@
       const ambientLight = new THREE.AmbientLight(0xffffff, 0.7);
       scene.add(ambientLight);
 
-      // 建立展廳群組（便於進入畫中時一鍵隱藏）
       galleryGroup = new THREE.Group();
       scene.add(galleryGroup);
 
@@ -151,7 +180,7 @@
       backWall.position.set(0, 5, -15);
       galleryGroup.add(backWall);
 
-      // 任天堂風小人物
+      // 3D 卡通角色
       player = new THREE.Group();
       const body = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.2, 0.6), new THREE.MeshStandardMaterial({ color: 0x3498db }));
       body.position.y = 0.6;
@@ -179,21 +208,20 @@
       window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
       window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 
-      // 2D 360 度環繞控制 (拖曳旋轉視角)
+      // 滑鼠拖曳 360 度環繞
       let isDragging = false, previousMousePosition = { x: 0, y: 0 };
       container.addEventListener('mousedown', () => isDragging = true);
       container.addEventListener('mouseup', () => isDragging = false);
       container.addEventListener('mousemove', e => {
         if (isPanoramaMode && isDragging) {
           const deltaX = e.clientX - previousMousePosition.x;
-          camera.rotation.y -= deltaX * 0.004; // 控制水平 360 度環繞
+          camera.rotation.y -= deltaX * 0.004;
         }
         previousMousePosition = { x: e.clientX, y: e.clientY };
       });
 
       document.getElementById('start-btn').addEventListener('click', () => {
         document.getElementById('start-screen').style.display = 'none';
-        initAudio();
       });
 
       document.getElementById('back-btn').addEventListener('click', exitPanorama);
@@ -201,40 +229,21 @@
       animate();
     }
 
-    function initAudio() {
-      audioContext = new (window.AudioContext || window.webkitAudioContext)();
-    }
-
-    function playAudioForPainting(audioUrl) {
-      if (!audioContext) return;
-      fetch(audioUrl)
-        .then(res => res.arrayBuffer())
-        .then(data => audioContext.decodeAudioData(data))
-        .then(buffer => {
-          if (audioSource) audioSource.stop();
-          audioSource = audioContext.createBufferSource();
-          audioSource.buffer = buffer;
-          audioSource.loop = true;
-          audioSource.connect(audioContext.destination);
-          audioSource.start(0);
-        }).catch(() => {});
-    }
-
-    // --- 進入 2D 環繞畫中世界（隱藏畫框與展廳）---
+    // --- 進入程序化延伸畫中世界（隱藏外層畫框與展廳）---
     function enterPanorama(paintingData) {
       isPanoramaMode = true;
       currentPainting = paintingData;
 
-      // 1. 完全隱藏 3D 主展廳、角色與畫框
+      // 1. 完全隱藏外層畫框與展廳
       galleryGroup.visible = false;
 
       // 2. 更新 UI 提示
       document.getElementById('prompt-text').style.display = 'none';
       document.getElementById('back-btn').style.display = 'block';
       document.getElementById('gallery-title').innerText = `進入畫中：${paintingData.name}`;
-      document.getElementById('controls-hint').innerText = '按住滑鼠左鍵左右拖曳，可 360° 全景環繞畫作';
+      document.getElementById('controls-hint').innerText = '按住滑鼠左鍵左右拖曳，可 360° 全景觀察程序化延伸繪畫';
 
-      // 3. 建立 2D 360 度環繞背景球體 (Equirectangular Panorama)
+      // 3. 建立 360 度內壁球體與 Shader 材質
       const panoGeo = new THREE.SphereGeometry(500, 60, 40);
       panoGeo.scale(-1, 1, 1);
 
@@ -243,17 +252,13 @@
         texture.wrapS = THREE.RepeatWrapping;
         texture.wrapT = THREE.ClampToEdgeWrapping;
 
-        if (paintingData.effect === 'shader') {
-          // 啟用定製的星夜流動 Shader
-          panoramaMaterial = new THREE.ShaderMaterial({
-            vertexShader: starryVertexShader,
-            fragmentShader: starryFragmentShader,
-            uniforms: { uTexture: { value: texture }, uTime: { value: 0.0 } },
-            side: THREE.DoubleSide
-          });
-        } else {
-          panoramaMaterial = new THREE.MeshBasicMaterial({ map: texture });
-        }
+        panoramaMaterial = new THREE.ShaderMaterial({
+          vertexShader: starryVertexShader,
+          fragmentShader: starryFragmentShader,
+          uniforms: { uTexture: { value: texture }, uTime: { value: 0.0 } },
+          side: THREE.DoubleSide
+        });
+
         panoramaMesh.material = panoramaMaterial;
       });
 
@@ -262,19 +267,14 @@
 
       camera.position.set(0, 0, 0);
       camera.rotation.set(0, 0, 0);
-
-      playAudioForPainting(paintingData.audio);
     }
 
-    // --- 退出畫中世界（還原畫框與展廳）---
+    // --- 退出畫中世界 ---
     function exitPanorama() {
       isPanoramaMode = false;
 
-      // 1. 移除全景背景，重新顯示展廳與畫框
       if (panoramaMesh) scene.remove(panoramaMesh);
-      galleryGroup.visible = true;
-
-      if (audioSource) audioSource.stop();
+      galleryGroup.visible = true; // 重新顯示展廳與畫框
 
       document.getElementById('back-btn').style.display = 'none';
       document.getElementById('gallery-title').innerText = '3D 主展覽廳';
@@ -289,7 +289,7 @@
       const elapsedTime = clock.getElapsedTime();
 
       if (!isPanoramaMode) {
-        // 小人物展廳移動
+        // 小人物展廳控制
         const speed = 0.15;
         if (keys['w'] || keys['arrowup']) player.position.z -= speed;
         if (keys['s'] || keys['arrowdown']) player.position.z += speed;
@@ -303,7 +303,7 @@
         camera.position.z = player.position.z + 8;
         camera.lookAt(player.position.x, 1.5, player.position.z);
 
-        // 碰撞與提示
+        // 檢測靠近畫作
         let nearPainting = null;
         paintingsData.forEach(p => {
           const dist = player.position.distanceTo(new THREE.Vector3(p.x, 0, p.z));
@@ -319,7 +319,7 @@
           promptUI.style.display = 'none';
         }
       } else {
-        // 更新《星夜》Shader 的動態時間參數
+        // 時時更新 Shader 的時間計數，讓動態演算法持續運算
         if (panoramaMesh && panoramaMesh.material.uniforms) {
           panoramaMesh.material.uniforms.uTime.value = elapsedTime;
         }
