@@ -304,3 +304,109 @@
   </script>
 </body>
 </html>
+// --- 1. 頂點著色器 (Vertex Shader) ---
+const starryVertexShader = `
+  varying vec2 vUv;
+  void main() {
+    vUv = uv;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+// --- 2. 片元著色器 (Fragment Shader) ---
+const starryFragmentShader = `
+  uniform sampler2D uTexture;
+  uniform float uTime;
+  varying vec2 vUv;
+
+  // 偽隨機與噪波函數 (用於模擬筆觸的流動感)
+  float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453);
+  }
+
+  float noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = hash(i);
+    float b = hash(i + vec2(1.0, 0.0));
+    float c = hash(i + vec2(0.0, 1.0));
+    float d = hash(i + vec2(1.0, 1.0));
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+  }
+
+  void main() {
+    vec2 uv = vUv;
+
+    // A. 判定圖像區域：Y軸越上方（天空區域）流動強度越高
+    float skyMask = smoothstep(0.35, 0.9, uv.y);
+
+    // B. 計算漩渦動態偏移 (Center Vortex Distortion)
+    vec2 vortexCenter = vec2(0.5, 0.7); // 星夜中央主漩渦的大約位置
+    vec2 distVec = uv - vortexCenter;
+    float dist = length(distVec);
+    
+    // 距離漩渦中心越近，旋轉角度越大
+    float angle = sin(uTime * 0.8 - dist * 4.0) * 0.08 * skyMask;
+    float cosA = cos(angle);
+    float sinA = sin(angle);
+    
+    // UV 座標旋轉矩陣運算
+    vec2 rotatedUv = vec2(
+      cosA * distVec.x - sinA * distVec.y,
+      sinA * distVec.x + cosA * distVec.y
+    ) + vortexCenter;
+
+    // C. 疊加細微筆觸波浪噪波 (Strokes Liquid Noise)
+    float n = noise(rotatedUv * 12.0 + vec2(uTime * 0.3, uTime * 0.2));
+    vec2 finalUv = rotatedUv + vec2(cos(n * 6.28), sin(n * 6.28)) * 0.012 * skyMask;
+
+    // D. 採樣原始圖片
+    vec4 color = texture2D(uTexture, finalUv);
+
+    // E. 微幅增強星光的呼吸感 (Shimmering Light)
+    float brightness = (color.r + color.g + color.b) / 3.0;
+    if (brightness > 0.65 && uv.y > 0.4) {
+      float shimmer = sin(uTime * 2.5 + brightness * 10.0) * 0.08;
+      color.rgb += vec3(shimmer * 0.5, shimmer * 0.4, shimmer * 0.1);
+    }
+
+    gl_FragColor = color;
+  }
+`;
+
+// --- 3. 在 Three.js 中建立動態材質 ---
+function createStarryNightMaterial(textureImageFolder) {
+  const textureLoader = new THREE.TextureLoader();
+  const starTexture = textureLoader.load(textureImageFolder); // 載入你的《星夜》圖片檔名
+
+  // 設置圖片尋址與過濾，確保流動平滑
+  starTexture.wrapS = THREE.MirroredRepeatWrapping;
+  starTexture.wrapT = THREE.MirroredRepeatWrapping;
+
+  const customShaderMaterial = new THREE.ShaderMaterial({
+    vertexShader: starryVertexShader,
+    fragmentShader: starryFragmentShader,
+    uniforms: {
+      uTexture: { value: starTexture },
+      uTime: { value: 0.0 }
+    },
+    side: THREE.DoubleSide
+  });
+
+  return customShaderMaterial;
+}
+let clock = new THREE.Clock(); // 在全域建立 Three.js 時鐘
+
+function animate() {
+  requestAnimationFrame(animate);
+
+  const elapsedTime = clock.getElapsedTime();
+
+  // 若當前進入《星夜》全景球體或貼圖，更新 Shader 時間參數
+  if (panoramaMesh && panoramaMesh.material.uniforms) {
+    panoramaMesh.material.uniforms.uTime.value = elapsedTime;
+  }
+
+  renderer.render(scene, camera);
+}
